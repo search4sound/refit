@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Collections.Immutable;
 using System.IO;
 using System.Linq;
+using System.Net.Http;
 using System.Reflection;
 using System.Threading.Tasks;
 
@@ -877,4 +878,18 @@ namespace Refit.Implementation
 
     public interface IMessage { }
 
+    public interface IBoringCrudWithClientApi<T, in TKey> : IBoringCrudApi<T, TKey>, IHttpClientProvider
+        where T : class
+    {
+    }
+
+    public interface IBoringOtherCrudWithClientApi<T, in TKey> : IBoringCrudApi<T, TKey>, IHttpClientProvider
+        where T : class
+    {
+    }
+
+    public interface IHttpClientProvider
+    {
+        HttpClient Client { get; }
+    }
 }
