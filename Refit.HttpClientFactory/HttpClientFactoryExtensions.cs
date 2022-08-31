@@ -4,7 +4,7 @@ using System.Net.Http;
 using System.Reflection;
 
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Http;
 
 namespace Refit
 {
@@ -46,11 +46,8 @@ namespace Refit
             services.AddSingleton(provider => new SettingsFor<T>(settingsAction?.Invoke(provider)));
             services.AddSingleton(provider => RequestBuilder.ForType<T>(provider.GetRequiredService<SettingsFor<T>>().Settings));
 
-            var settings = services.BuildServiceProvider().GetService<SettingsFor<T>>()?.Settings;
-            var httpClientName = (settings == null || string.IsNullOrEmpty(settings.HttpClientName)) ? UniqueName.ForType<T>() : settings.HttpClientName!;
-
-            var builder = services
-                .AddHttpClient(httpClientName)
+            return services
+                .AddHttpClient(UniqueName.ForType<T>())
                 .ConfigureHttpMessageHandlerBuilder(builder =>
                 {
                     // check to see if user provided custom auth token
@@ -58,16 +55,8 @@ namespace Refit
                     {
                         builder.PrimaryHandler = innerHandler;
                     }
-                });
-
-            if (settings is null || string.IsNullOrEmpty(settings.HttpClientName))
-                return builder.AddTypedClient((client, serviceProvider)
-                                => RestService.For<T>(client, serviceProvider.GetService<IRequestBuilder<T>>()!));
-
-            // Re-use HttpClients by name across multiple Refit interface types...
-            services.TryAddSingleton(new RegisteredHttpClientsForRefit());
-            return AddRefitClientWithNamedHttpClient<T>(builder, settings.HttpClientBaseAddress!, false, (client, serviceProvider)
-                                => RestService.For<T>(client, serviceProvider.GetService<IRequestBuilder<T>>()!));
+                })
+                .AddTypedClient((client, serviceProvider) => RestService.For<T>(client, serviceProvider.GetService<IRequestBuilder<T>>()!));
         }
 
         /// <summary>
@@ -84,11 +73,8 @@ namespace Refit
             services.AddSingleton(settingsType, provider => Activator.CreateInstance(typeof(SettingsFor<>).MakeGenericType(refitInterfaceType)!, settingsAction?.Invoke(provider))!);
             services.AddSingleton(requestBuilderType, provider => RequestBuilderGenericForTypeMethod.MakeGenericMethod(refitInterfaceType).Invoke(null, new object?[] { ((ISettingsFor)provider.GetRequiredService(settingsType)).Settings })!);
 
-            var settings = ((ISettingsFor)services.BuildServiceProvider().GetService(settingsType))?.Settings;
-            var httpClientName = (settings == null || string.IsNullOrEmpty(settings.HttpClientName)) ? UniqueName.ForType(refitInterfaceType) : settings.HttpClientName!;
-
-            var builder = services
-                .AddHttpClient(httpClientName)
+            return services
+                .AddHttpClient(UniqueName.ForType(refitInterfaceType))
                 .ConfigureHttpMessageHandlerBuilder(builder =>
                 {
                     // check to see if user provided custom auth token
@@ -96,17 +82,8 @@ namespace Refit
                     {
                         builder.PrimaryHandler = innerHandler;
                     }
-                });
-
-            if (settings is null || string.IsNullOrEmpty(settings.HttpClientName))
-            {
-                return builder.AddTypedClient(refitInterfaceType, (client, serviceProvider)
-                            => RestService.For(refitInterfaceType, client, (IRequestBuilder)serviceProvider.GetRequiredService(requestBuilderType)));
-            }
-
-            services.TryAddSingleton(new RegisteredHttpClientsForRefit());
-            return AddRefitClientWithNamedHttpClient(refitInterfaceType, builder, settings.HttpClientBaseAddress!, false, (client, serviceProvider)
-                            => RestService.For(refitInterfaceType, client, (IRequestBuilder)serviceProvider.GetRequiredService(requestBuilderType)));
+                })
+                .AddTypedClient(refitInterfaceType, (client, serviceProvider) => RestService.For(refitInterfaceType, client, (IRequestBuilder)serviceProvider.GetRequiredService(requestBuilderType)));
         }
 
         private static readonly MethodInfo RequestBuilderGenericForTypeMethod = typeof(RequestBuilder)
@@ -157,89 +134,6 @@ namespace Refit
             });
 
             return builder;
-        }
-
-        // AddRefitClientWithNamedHttpClient<T>:
-        // Reuses HttpClient across multiple Refit Service types when they share the same client name.
-        // Using the same value for both the HttpClientName and the HttpClientBaseAddress is recommended.
-        private static IHttpClientBuilder AddRefitClientWithNamedHttpClient<T>(IHttpClientBuilder builder, Uri baseAddress, bool overwriteExistingBaseAddress, Func<HttpClient, IServiceProvider, T> factory) where T : class
-        {
-            builder.Services.AddTransient<T>(s =>
-            {
-                var client = GetHttpClientByName(builder, builder.Name);
-
-                if (client != null)
-                {
-                    if (client.BaseAddress == null || overwriteExistingBaseAddress)
-                        client.BaseAddress = baseAddress;
-                    return factory(client, s);;
-                }
-
-                var httpClientFactory = s.GetRequiredService<IHttpClientFactory>();
-                client = httpClientFactory.CreateClient(builder.Name);
-                client.BaseAddress = baseAddress;
-                RegisterHttpClient(builder, builder.Name, client);
-                return factory(client, s);
-            });
-
-            return builder;
-        }
-
-        // AddRefitClientWithNamedHttpClient: see comments for AddRefitClientWithNamedHttpClient<T>.
-        private static IHttpClientBuilder AddRefitClientWithNamedHttpClient(Type type, IHttpClientBuilder builder, Uri baseAddress, bool overwriteExistingBaseAddress, Func<HttpClient, IServiceProvider, object> factory)
-        {
-            builder.Services.AddTransient(type, s =>
-            {
-                var client = GetHttpClientByName(builder, builder.Name);
-
-                if (client != null)
-                {
-                    if (client.BaseAddress == null || overwriteExistingBaseAddress)
-                        client.BaseAddress = baseAddress;
-                    return factory(client, s);
-                }
-
-                var httpClientFactory = s.GetRequiredService<IHttpClientFactory>();
-                client = httpClientFactory.CreateClient(builder.Name);
-                client.BaseAddress = baseAddress;
-                RegisterHttpClient(builder, builder.Name, client);
-                return factory(client, s);
-            });
-
-            return builder;
-        }
-
-        private static HttpClient? GetHttpClientByName(IHttpClientBuilder builder, string name)
-        {
-            var registryService = builder.Services.FirstOrDefault(sd => sd.ServiceType == typeof(RegisteredHttpClientsForRefit));
-
-            if (registryService == null)
-            {
-                builder.Services.TryAddSingleton(RegisteredHttpClientsForRefitInstance);
-                registryService = builder.Services.First(sd => sd.ServiceType == typeof(RegisteredHttpClientsForRefit))!;
-            }
-
-            var registry = (RegisteredHttpClientsForRefit)registryService.ImplementationInstance!;
-
-            registry.NamedClients.TryGetValue(name, out var httpClient);
-
-            return httpClient;
-        }
-
-        private static readonly RegisteredHttpClientsForRefit RegisteredHttpClientsForRefitInstance = new();
-
-        private static void RegisterHttpClient(IHttpClientBuilder builder, string name, HttpClient httpClient)
-        {
-            builder.Services.TryAddSingleton(RegisteredHttpClientsForRefitInstance);
-
-            var registryService = builder.Services.First(sd => sd.ServiceType == typeof(RegisteredHttpClientsForRefit));
-            var registry = (RegisteredHttpClientsForRefit)registryService.ImplementationInstance!;
-
-            if (registry.NamedClients.ContainsKey(name))
-                return;
-
-            registry.NamedClients[name] = httpClient;
-            return;
         }
     }
 }

@@ -88,16 +88,6 @@ namespace Refit
         /// Sets the default behavior when sending a request's body content. (defaults to false, request body is not streamed to the server)
         /// </summary>
         public bool Buffered { get; set; } = false;
-
-        /// <summary>
-        /// Supports enabling multiple Refit interfaces to use the same HttpClient by setting a common name for the client.
-        /// </summary>
-        public string? HttpClientName { get; set; }
-
-        /// <summary>
-        /// Supports setting the HttpClient BaseAddress from within AddRefitClient extension methods.
-        /// </summary>
-        public Uri? HttpClientBaseAddress { get; set; }
     }
 
     /// <summary>

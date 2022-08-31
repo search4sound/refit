@@ -1,13 +1,13 @@
-﻿using System.Threading.Tasks;
+﻿using System.ComponentModel;
+using System.Threading.Tasks;
 
-namespace Refit.Tests
+using Refit;
+
+interface IFooWithOtherAttribute
 {
-    public interface IFooWithOtherAttribute
-    {
-        [Get("/")]
-        Task GetRoot();
+    [Get("/")]
+    Task GetRoot();
 
-        [Post("/")]
-        Task PostRoot();
-    }
+    [DisplayName("/")]
+    Task PostRoot();
 }
